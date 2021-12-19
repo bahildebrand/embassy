@@ -10,12 +10,14 @@ embassy = { version = "0.1.0", path = "../../embassy", features = ["defmt"] }
 embassy-traits = { version = "0.1.0", path = "../../embassy-traits", features = ["defmt"] }
 embassy-nrf = { version = "0.1.0", path = "../../embassy-nrf", features = ["defmt", "nrf52840", "time-driver-rtc1", "gpiote"] }
 
+embedded-hal = { version = "1.0.0-alpha.6", git = "https://github.com/embassy-rs/embedded-hal", branch = "async" }
+embedded-hal-async = { version = "0.1.0", git = "https://github.com/embassy-rs/embedded-hal", branch = "async" }
+
 defmt = "0.3"
 defmt-rtt = "0.3"
 
 cortex-m = "0.7.3"
 cortex-m-rt = "0.7.0"
-embedded-hal = "0.2.6"
 panic-probe = { version = "0.3", features = ["print-defmt"] }
 futures = { version = "0.3.17", default-features = false, features = ["async-await"] }
 rand = { version = "0.8.4", default-features = false }

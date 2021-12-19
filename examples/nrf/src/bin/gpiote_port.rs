@@ -6,17 +6,17 @@
 mod example_common;
 
 use embassy::executor::Spawner;
-use embassy::traits::gpio::{WaitForHigh, WaitForLow};
 use embassy_nrf::gpio::{AnyPin, Input, Pin as _, Pull};
 use embassy_nrf::Peripherals;
+use embedded_hal_async::digital::{WaitForHigh, WaitForLow};
 use example_common::*;
 
 #[embassy::task(pool_size = 4)]
 async fn button_task(n: usize, mut pin: Input<'static, AnyPin>) {
     loop {
-        pin.wait_for_low().await;
+        pin.wait_for_low().await.unwrap();
         info!("Button {:?} pressed!", n);
-        pin.wait_for_high().await;
+        pin.wait_for_high().await.unwrap();
         info!("Button {:?} released!", n);
     }
 }

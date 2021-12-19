@@ -12,9 +12,9 @@ use embassy_nrf::uarte::UarteRx;
 use example_common::*;
 
 use embassy::executor::Spawner;
-use embassy::traits::uart::{Read, Write};
 use embassy_nrf::gpio::NoPin;
 use embassy_nrf::{interrupt, uarte, Peripherals};
+use embedded_hal_async::serial::{Read, Write};
 
 static CHANNEL: Forever<Channel<Noop, [u8; 8], 1>> = Forever::new();
 

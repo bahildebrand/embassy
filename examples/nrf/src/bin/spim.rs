@@ -9,7 +9,7 @@ use embassy::executor::Spawner;
 use embassy_nrf::gpio::{Level, Output, OutputDrive};
 use embassy_nrf::Peripherals;
 use embassy_nrf::{interrupt, spim};
-use embassy_traits::spi::FullDuplex;
+use embedded_hal_async::spi::ReadWrite;
 use example_common::*;
 
 #[embassy::main]
@@ -31,7 +31,7 @@ async fn main(_spawner: Spawner, p: Peripherals) {
     ncs.set_low();
     cortex_m::asm::delay(5);
     let tx = [0xFF];
-    unwrap!(spim.read_write(&mut [], &tx).await);
+    unwrap!(spim.transfer(&mut [], &tx).await);
     cortex_m::asm::delay(10);
     ncs.set_high();
 
@@ -44,7 +44,7 @@ async fn main(_spawner: Spawner, p: Peripherals) {
     ncs.set_low();
     cortex_m::asm::delay(5000);
     let tx = [0b000_11101, 0];
-    unwrap!(spim.read_write(&mut rx, &tx).await);
+    unwrap!(spim.transfer(&mut rx, &tx).await);
     cortex_m::asm::delay(5000);
     ncs.set_high();
     info!("estat: {=[?]}", rx);
@@ -54,7 +54,7 @@ async fn main(_spawner: Spawner, p: Peripherals) {
     ncs.set_low();
     cortex_m::asm::delay(5);
     let tx = [0b100_11111, 0b11];
-    unwrap!(spim.read_write(&mut rx, &tx).await);
+    unwrap!(spim.transfer(&mut rx, &tx).await);
     cortex_m::asm::delay(10);
     ncs.set_high();
 
@@ -63,7 +63,7 @@ async fn main(_spawner: Spawner, p: Peripherals) {
     ncs.set_low();
     cortex_m::asm::delay(5);
     let tx = [0b000_10010, 0];
-    unwrap!(spim.read_write(&mut rx, &tx).await);
+    unwrap!(spim.transfer(&mut rx, &tx).await);
     cortex_m::asm::delay(10);
     ncs.set_high();
 

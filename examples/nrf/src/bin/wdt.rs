@@ -10,7 +10,7 @@ use embassy::executor::Spawner;
 use embassy_nrf::gpio::{Input, Pull};
 use embassy_nrf::wdt::{Config, Watchdog};
 use embassy_nrf::Peripherals;
-use embassy_traits::gpio::{WaitForHigh, WaitForLow};
+use embedded_hal_async::digital::{WaitForHigh, WaitForLow};
 
 #[embassy::main]
 async fn main(_spawner: Spawner, p: Peripherals) {
@@ -36,8 +36,8 @@ async fn main(_spawner: Spawner, p: Peripherals) {
     info!("Watchdog started, press button 1 to pet it or I'll reset in 3 seconds!");
 
     loop {
-        button.wait_for_high().await;
-        button.wait_for_low().await;
+        button.wait_for_high().await.unwrap();
+        button.wait_for_low().await.unwrap();
         info!("Button pressed, petting watchdog!");
         handle.pet();
     }

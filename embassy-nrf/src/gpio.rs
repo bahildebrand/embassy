@@ -7,8 +7,10 @@ use core::marker::PhantomData;
 use cfg_if::cfg_if;
 use embassy::util::Unborrow;
 use embassy_hal_common::{unborrow, unsafe_impl_unborrow};
-use embedded_hal::digital::v2::{InputPin, OutputPin, StatefulOutputPin};
 use gpio::pin_cnf::DRIVE_A;
+
+use embedded_hal_02::digital::v2 as eh02;
+use embedded_hal_1::digital::blocking as eh1;
 
 use crate::pac;
 use crate::pac::p0 as gpio;
@@ -57,7 +59,19 @@ impl<'d, T: Pin> Input<'d, T> {
     }
 }
 
-impl<'d, T: Pin> InputPin for Input<'d, T> {
+impl<'d, T: Pin> eh02::InputPin for Input<'d, T> {
+    type Error = Infallible;
+
+    fn is_high(&self) -> Result<bool, Self::Error> {
+        Ok(self.is_high())
+    }
+
+    fn is_low(&self) -> Result<bool, Self::Error> {
+        Ok(self.is_low())
+    }
+}
+
+impl<'d, T: Pin> eh1::InputPin for Input<'d, T> {
     type Error = Infallible;
 
     fn is_high(&self) -> Result<bool, Self::Error> {
@@ -142,7 +156,7 @@ impl<'d, T: Pin> Output<'d, T> {
     }
 }
 
-impl<'d, T: Pin> OutputPin for Output<'d, T> {
+impl<'d, T: Pin> eh02::OutputPin for Output<'d, T> {
     type Error = Infallible;
 
     fn set_high(&mut self) -> Result<(), Self::Error> {
@@ -154,7 +168,29 @@ impl<'d, T: Pin> OutputPin for Output<'d, T> {
     }
 }
 
-impl<'d, T: Pin> StatefulOutputPin for Output<'d, T> {
+impl<'d, T: Pin> eh02::StatefulOutputPin for Output<'d, T> {
+    fn is_set_high(&self) -> Result<bool, Self::Error> {
+        Ok(self.is_set_high())
+    }
+
+    fn is_set_low(&self) -> Result<bool, Self::Error> {
+        Ok(self.is_set_low())
+    }
+}
+
+impl<'d, T: Pin> eh1::OutputPin for Output<'d, T> {
+    type Error = Infallible;
+
+    fn set_high(&mut self) -> Result<(), Self::Error> {
+        Ok(self.set_high())
+    }
+
+    fn set_low(&mut self) -> Result<(), Self::Error> {
+        Ok(self.set_low())
+    }
+}
+
+impl<'d, T: Pin> eh1::StatefulOutputPin for Output<'d, T> {
     fn is_set_high(&self) -> Result<bool, Self::Error> {
         Ok(self.is_set_high())
     }
@@ -279,7 +315,7 @@ impl<'d, T: Pin> Drop for FlexPin<'d, T> {
 /// Implement [`InputPin`] for [`FlexPin`];
 ///
 /// If the pin is not in input mode the result is unspecified.
-impl<'d, T: Pin> InputPin for FlexPin<'d, T> {
+impl<'d, T: Pin> eh02::InputPin for FlexPin<'d, T> {
     type Error = Infallible;
 
     fn is_high(&self) -> Result<bool, Self::Error> {
@@ -291,7 +327,7 @@ impl<'d, T: Pin> InputPin for FlexPin<'d, T> {
     }
 }
 
-impl<'d, T: Pin> OutputPin for FlexPin<'d, T> {
+impl<'d, T: Pin> eh02::OutputPin for FlexPin<'d, T> {
     type Error = Infallible;
 
     fn set_high(&mut self) -> Result<(), Self::Error> {
@@ -303,7 +339,44 @@ impl<'d, T: Pin> OutputPin for FlexPin<'d, T> {
     }
 }
 
-impl<'d, T: Pin> StatefulOutputPin for FlexPin<'d, T> {
+impl<'d, T: Pin> eh02::StatefulOutputPin for FlexPin<'d, T> {
+    fn is_set_high(&self) -> Result<bool, Self::Error> {
+        Ok(self.is_set_high())
+    }
+
+    fn is_set_low(&self) -> Result<bool, Self::Error> {
+        Ok(self.is_set_low())
+    }
+}
+
+/// Implement [`InputPin`] for [`FlexPin`];
+///
+/// If the pin is not in input mode the result is unspecified.
+impl<'d, T: Pin> eh1::InputPin for FlexPin<'d, T> {
+    type Error = Infallible;
+
+    fn is_high(&self) -> Result<bool, Self::Error> {
+        Ok(self.is_high())
+    }
+
+    fn is_low(&self) -> Result<bool, Self::Error> {
+        Ok(self.is_low())
+    }
+}
+
+impl<'d, T: Pin> eh1::OutputPin for FlexPin<'d, T> {
+    type Error = Infallible;
+
+    fn set_high(&mut self) -> Result<(), Self::Error> {
+        Ok(self.set_high())
+    }
+
+    fn set_low(&mut self) -> Result<(), Self::Error> {
+        Ok(self.set_low())
+    }
+}
+
+impl<'d, T: Pin> eh1::StatefulOutputPin for FlexPin<'d, T> {
     fn is_set_high(&self) -> Result<bool, Self::Error> {
         Ok(self.is_set_high())
     }

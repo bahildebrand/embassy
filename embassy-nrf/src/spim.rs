@@ -5,19 +5,22 @@ use core::marker::PhantomData;
 use core::sync::atomic::{compiler_fence, Ordering};
 use core::task::Poll;
 use embassy::interrupt::InterruptExt;
-use embassy::traits;
 use embassy::util::Unborrow;
 use embassy_hal_common::unborrow;
 use futures::future::poll_fn;
-use traits::spi::{FullDuplex, Read, Spi, Write};
+
+use embedded_hal_02::blocking::spi as eh02;
+use embedded_hal_1::spi as eh1;
+use embedded_hal_async::spi as eh_async;
 
 use crate::gpio;
 use crate::gpio::sealed::Pin as _;
 use crate::gpio::{OptionalPin, Pin as GpioPin};
 use crate::interrupt::Interrupt;
+use crate::util::{slice_ptr_parts, slice_ptr_parts_mut};
 use crate::{pac, util::slice_in_ram_or};
 
-pub use embedded_hal::spi::{Mode, Phase, Polarity, MODE_0, MODE_1, MODE_2, MODE_3};
+pub use embedded_hal_1::spi::{Mode, Phase, Polarity, MODE_0, MODE_1, MODE_2, MODE_3};
 pub use pac::spim0::frequency::FREQUENCY_A as Frequency;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +31,16 @@ pub enum Error {
     RxBufferTooLong,
     /// EasyDMA can only read from data memory, read only buffers in flash will fail.
     DMABufferNotInDataMemory,
+}
+
+impl eh1::Error for Error {
+    fn kind(&self) -> eh1::ErrorKind {
+        match *self {
+            Self::TxBufferTooLong => eh1::ErrorKind::Other,
+            Self::RxBufferTooLong => eh1::ErrorKind::Other,
+            Self::DMABufferNotInDataMemory => eh1::ErrorKind::Other,
+        }
+    }
 }
 
 pub struct Spim<'d, T: Instance> {
@@ -157,6 +170,74 @@ impl<'d, T: Instance> Spim<'d, T> {
             r.intenclr.write(|w| w.end().clear());
         }
     }
+
+    fn start_transfer(&mut self, rx: *mut [u8], tx: *const [u8]) -> Result<(), Error> {
+        slice_in_ram_or(tx, Error::DMABufferNotInDataMemory)?;
+        // NOTE: RAM slice check for rx is not necessary, as a mutable
+        // slice can only be built from data located in RAM.
+
+        // Conservative compiler fence to prevent optimizations that do not
+        // take in to account actions by DMA. The fence has been placed here,
+        // before any DMA action has started.
+        compiler_fence(Ordering::SeqCst);
+
+        let r = T::regs();
+
+        // Set up the DMA write.
+        let (ptr, len) = slice_ptr_parts(tx);
+        r.txd.ptr.write(|w| unsafe { w.ptr().bits(ptr as _) });
+        r.txd.maxcnt.write(|w| unsafe { w.maxcnt().bits(len as _) });
+
+        // Set up the DMA read.
+        let (ptr, len) = slice_ptr_parts_mut(rx);
+        r.rxd.ptr.write(|w| unsafe { w.ptr().bits(ptr as _) });
+        r.rxd.maxcnt.write(|w| unsafe { w.maxcnt().bits(len as _) });
+
+        // Reset and enable the event
+        r.events_end.reset();
+        r.intenset.write(|w| w.end().set());
+
+        // Start SPI transaction.
+        r.tasks_start.write(|w| unsafe { w.bits(1) });
+
+        Ok(())
+    }
+
+    fn blocking_transfer(&mut self, rx: *mut [u8], tx: *const [u8]) -> Result<(), Error> {
+        self.start_transfer(rx, tx)?;
+
+        // Wait for 'end' event.
+        while T::regs().events_end.read().bits() == 0 {}
+
+        // Conservative compiler fence to prevent optimizations that do not
+        // take in to account actions by DMA. The fence has been placed here,
+        // after all possible DMA actions have completed.
+        compiler_fence(Ordering::SeqCst);
+
+        Ok(())
+    }
+
+    async fn async_transfer(&mut self, rx: *mut [u8], tx: *const [u8]) -> Result<(), Error> {
+        self.start_transfer(rx, tx)?;
+
+        // Wait for 'end' event.
+        poll_fn(|cx| {
+            T::state().end_waker.register(cx.waker());
+            if T::regs().events_end.read().bits() != 0 {
+                return Poll::Ready(());
+            }
+
+            Poll::Pending
+        })
+        .await;
+
+        // Conservative compiler fence to prevent optimizations that do not
+        // take in to account actions by DMA. The fence has been placed here,
+        // after all possible DMA actions have completed.
+        compiler_fence(Ordering::SeqCst);
+
+        Ok(())
+    }
 }
 
 impl<'d, T: Instance> Drop for Spim<'d, T> {
@@ -177,190 +258,182 @@ impl<'d, T: Instance> Drop for Spim<'d, T> {
     }
 }
 
-impl<'d, T: Instance> Spi<u8> for Spim<'d, T> {
+impl<'d, T: Instance> eh1::ErrorType for Spim<'d, T> {
     type Error = Error;
 }
 
-impl<'d, T: Instance> Read<u8> for Spim<'d, T> {
+impl<'d, T: Instance> eh1::blocking::Read<u8> for Spim<'d, T> {
+    fn read(&mut self, words: &mut [u8]) -> Result<(), Self::Error> {
+        self.blocking_transfer(words, &[])
+    }
+
+    fn read_batch(&mut self, words: &mut [&mut [u8]]) -> Result<(), Self::Error> {
+        for buf in words {
+            eh1::blocking::Read::read(self, buf)?
+        }
+        Ok(())
+    }
+}
+
+impl<'d, T: Instance> eh1::blocking::Write<u8> for Spim<'d, T> {
+    fn write(&mut self, words: &[u8]) -> Result<(), Self::Error> {
+        self.blocking_transfer(&mut [], words)
+    }
+
+    fn write_batch(&mut self, words: &[&[u8]]) -> Result<(), Self::Error> {
+        for buf in words {
+            eh1::blocking::Write::write(self, buf)?
+        }
+        Ok(())
+    }
+
+    fn write_iter<WI>(&mut self, words: WI) -> Result<(), Self::Error>
+    where
+        WI: IntoIterator<Item = u8>,
+    {
+        for w in words {
+            eh1::blocking::Write::write(self, &[w])?;
+        }
+        Ok(())
+    }
+}
+
+impl<'d, T: Instance> eh1::blocking::ReadWrite<u8> for Spim<'d, T> {
+    fn transfer(&mut self, read: &mut [u8], write: &[u8]) -> Result<(), Self::Error> {
+        self.blocking_transfer(read, write)
+    }
+
+    fn transfer_in_place(&mut self, words: &mut [u8]) -> Result<(), Self::Error> {
+        self.blocking_transfer(words, words)
+    }
+
+    fn batch<'a>(
+        &mut self,
+        operations: &mut [eh_async::Operation<'a, u8>],
+    ) -> Result<(), Self::Error> {
+        use eh1::blocking::Operation;
+        for o in operations {
+            match o {
+                Operation::Read(b) => eh1::blocking::Read::read(self, b)?,
+                Operation::Write(b) => eh1::blocking::Write::write(self, b)?,
+                Operation::Transfer(r, w) => eh1::blocking::ReadWrite::transfer(self, r, w)?,
+                Operation::TransferInPlace(b) => {
+                    eh1::blocking::ReadWrite::transfer_in_place(self, b)?
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<'d, T: Instance> eh_async::Read<u8> for Spim<'d, T> {
     type ReadFuture<'a>
     where
         Self: 'a,
     = impl Future<Output = Result<(), Self::Error>> + 'a;
 
-    fn read<'a>(&'a mut self, data: &'a mut [u8]) -> Self::ReadFuture<'a> {
-        self.read_write(data, &[])
+    fn read<'a>(&'a mut self, words: &'a mut [u8]) -> Self::ReadFuture<'a> {
+        self.async_transfer(words, &mut [])
+    }
+
+    type ReadBatchFuture<'a>
+    where
+        Self: 'a,
+    = impl Future<Output = Result<(), Self::Error>> + 'a;
+
+    fn read_batch<'a>(&'a mut self, words: &'a mut [&'a mut [u8]]) -> Self::ReadBatchFuture<'a> {
+        async move {
+            for buf in words {
+                self.read(buf).await?
+            }
+            Ok(())
+        }
     }
 }
 
-impl<'d, T: Instance> Write<u8> for Spim<'d, T> {
+impl<'d, T: Instance> eh_async::Write<u8> for Spim<'d, T> {
     type WriteFuture<'a>
     where
         Self: 'a,
     = impl Future<Output = Result<(), Self::Error>> + 'a;
 
     fn write<'a>(&'a mut self, data: &'a [u8]) -> Self::WriteFuture<'a> {
-        self.read_write(&mut [], data)
+        self.async_transfer(&mut [], data)
     }
-}
 
-impl<'d, T: Instance> FullDuplex<u8> for Spim<'d, T> {
-    type WriteReadFuture<'a>
+    type WriteBatchFuture<'a>
     where
         Self: 'a,
     = impl Future<Output = Result<(), Self::Error>> + 'a;
 
-    fn read_write<'a>(&'a mut self, rx: &'a mut [u8], tx: &'a [u8]) -> Self::WriteReadFuture<'a> {
+    fn write_batch<'a>(&'a mut self, words: &'a [&'a [u8]]) -> Self::WriteBatchFuture<'a> {
         async move {
-            slice_in_ram_or(tx, Error::DMABufferNotInDataMemory)?;
-            // NOTE: RAM slice check for rx is not necessary, as a mutable
-            // slice can only be built from data located in RAM.
-
-            // Conservative compiler fence to prevent optimizations that do not
-            // take in to account actions by DMA. The fence has been placed here,
-            // before any DMA action has started.
-            compiler_fence(Ordering::SeqCst);
-
-            let r = T::regs();
-            let s = T::state();
-
-            // Set up the DMA write.
-            r.txd
-                .ptr
-                .write(|w| unsafe { w.ptr().bits(tx.as_ptr() as u32) });
-            r.txd
-                .maxcnt
-                .write(|w| unsafe { w.maxcnt().bits(tx.len() as _) });
-
-            // Set up the DMA read.
-            r.rxd
-                .ptr
-                .write(|w| unsafe { w.ptr().bits(rx.as_mut_ptr() as u32) });
-            r.rxd
-                .maxcnt
-                .write(|w| unsafe { w.maxcnt().bits(rx.len() as _) });
-
-            // Reset and enable the event
-            r.events_end.reset();
-            r.intenset.write(|w| w.end().set());
-
-            // Start SPI transaction.
-            r.tasks_start.write(|w| unsafe { w.bits(1) });
-
-            // Conservative compiler fence to prevent optimizations that do not
-            // take in to account actions by DMA. The fence has been placed here,
-            // after all possible DMA actions have completed.
-            compiler_fence(Ordering::SeqCst);
-
-            // Wait for 'end' event.
-            poll_fn(|cx| {
-                s.end_waker.register(cx.waker());
-                if r.events_end.read().bits() != 0 {
-                    return Poll::Ready(());
-                }
-
-                Poll::Pending
-            })
-            .await;
-
+            for buf in words {
+                self.write(buf).await?
+            }
             Ok(())
         }
     }
 }
 
-// Blocking functions are provided by implementing `embedded_hal` traits.
-//
-// Code could be shared between traits to reduce code size.
-impl<'d, T: Instance> embedded_hal::blocking::spi::Transfer<u8> for Spim<'d, T> {
+impl<'d, T: Instance> eh_async::ReadWrite<u8> for Spim<'d, T> {
+    type TransferFuture<'a>
+    where
+        Self: 'a,
+    = impl Future<Output = Result<(), Self::Error>> + 'a;
+
+    fn transfer<'a>(&'a mut self, rx: &'a mut [u8], tx: &'a [u8]) -> Self::TransferFuture<'a> {
+        self.async_transfer(rx, tx)
+    }
+
+    type TransferInPlaceFuture<'a>
+    where
+        Self: 'a,
+    = impl Future<Output = Result<(), Self::Error>> + 'a;
+
+    fn transfer_in_place<'a>(&'a mut self, words: &'a mut [u8]) -> Self::TransferInPlaceFuture<'a> {
+        self.async_transfer(words, words)
+    }
+
+    type BatchFuture<'a>
+    where
+        Self: 'a,
+    = impl Future<Output = Result<(), Self::Error>> + 'a;
+
+    fn batch<'a>(
+        &'a mut self,
+        operations: &'a mut [eh_async::Operation<'a, u8>],
+    ) -> Self::BatchFuture<'a> {
+        use eh1::blocking::Operation;
+        async move {
+            for o in operations {
+                match o {
+                    Operation::Read(b) => eh_async::Read::read(self, b).await?,
+                    Operation::Write(b) => eh_async::Write::write(self, b).await?,
+                    Operation::Transfer(r, w) => eh_async::ReadWrite::transfer(self, r, w).await?,
+                    Operation::TransferInPlace(b) => {
+                        eh_async::ReadWrite::transfer_in_place(self, b).await?
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+impl<'d, T: Instance> eh02::Transfer<u8> for Spim<'d, T> {
     type Error = Error;
     fn transfer<'w>(&mut self, words: &'w mut [u8]) -> Result<&'w [u8], Self::Error> {
-        slice_in_ram_or(words, Error::DMABufferNotInDataMemory)?;
-
-        // Conservative compiler fence to prevent optimizations that do not
-        // take in to account actions by DMA. The fence has been placed here,
-        // before any DMA action has started.
-        compiler_fence(Ordering::SeqCst);
-
-        let r = T::regs();
-
-        // Set up the DMA write.
-        r.txd
-            .ptr
-            .write(|w| unsafe { w.ptr().bits(words.as_ptr() as u32) });
-        r.txd
-            .maxcnt
-            .write(|w| unsafe { w.maxcnt().bits(words.len() as _) });
-
-        // Set up the DMA read.
-        r.rxd
-            .ptr
-            .write(|w| unsafe { w.ptr().bits(words.as_mut_ptr() as u32) });
-        r.rxd
-            .maxcnt
-            .write(|w| unsafe { w.maxcnt().bits(words.len() as _) });
-
-        // Disable the end event since we are busy-polling.
-        r.events_end.reset();
-
-        // Start SPI transaction.
-        r.tasks_start.write(|w| unsafe { w.bits(1) });
-
-        // Wait for 'end' event.
-        while r.events_end.read().bits() == 0 {}
-
-        // Conservative compiler fence to prevent optimizations that do not
-        // take in to account actions by DMA. The fence has been placed here,
-        // after all possible DMA actions have completed.
-        compiler_fence(Ordering::SeqCst);
-
+        self.blocking_transfer(words, words)?;
         Ok(words)
     }
 }
 
-impl<'d, T: Instance> embedded_hal::blocking::spi::Write<u8> for Spim<'d, T> {
+impl<'d, T: Instance> eh02::Write<u8> for Spim<'d, T> {
     type Error = Error;
 
     fn write(&mut self, words: &[u8]) -> Result<(), Self::Error> {
-        slice_in_ram_or(words, Error::DMABufferNotInDataMemory)?;
-        let recv: &mut [u8] = &mut [];
-
-        // Conservative compiler fence to prevent optimizations that do not
-        // take in to account actions by DMA. The fence has been placed here,
-        // before any DMA action has started.
-        compiler_fence(Ordering::SeqCst);
-
-        let r = T::regs();
-
-        // Set up the DMA write.
-        r.txd
-            .ptr
-            .write(|w| unsafe { w.ptr().bits(words.as_ptr() as u32) });
-        r.txd
-            .maxcnt
-            .write(|w| unsafe { w.maxcnt().bits(words.len() as _) });
-
-        // Set up the DMA read.
-        r.rxd
-            .ptr
-            .write(|w| unsafe { w.ptr().bits(recv.as_mut_ptr() as u32) });
-        r.rxd
-            .maxcnt
-            .write(|w| unsafe { w.maxcnt().bits(recv.len() as _) });
-
-        // Disable the end event since we are busy-polling.
-        r.events_end.reset();
-
-        // Start SPI transaction.
-        r.tasks_start.write(|w| unsafe { w.bits(1) });
-
-        // Wait for 'end' event.
-        while r.events_end.read().bits() == 0 {}
-
-        // Conservative compiler fence to prevent optimizations that do not
-        // take in to account actions by DMA. The fence has been placed here,
-        // after all possible DMA actions have completed.
-        compiler_fence(Ordering::SeqCst);
-
-        Ok(())
+        self.blocking_transfer(&mut [], words)
     }
 }
 

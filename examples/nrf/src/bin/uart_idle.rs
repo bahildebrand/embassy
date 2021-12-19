@@ -4,13 +4,12 @@
 
 #[path = "../example_common.rs"]
 mod example_common;
-use embassy_traits::uart::ReadUntilIdle;
 use example_common::*;
 
 use embassy::executor::Spawner;
-use embassy::traits::uart::Write;
 use embassy_nrf::gpio::NoPin;
 use embassy_nrf::{interrupt, uarte, Peripherals};
+use embedded_hal_async::serial::Write;
 
 #[embassy::main]
 async fn main(_spawner: Spawner, p: Peripherals) {

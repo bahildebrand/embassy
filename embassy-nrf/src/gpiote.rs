@@ -5,8 +5,11 @@ use core::task::{Context, Poll};
 use embassy::interrupt::{Interrupt, InterruptExt};
 use embassy::waitqueue::AtomicWaker;
 use embassy_hal_common::unsafe_impl_unborrow;
-use embedded_hal::digital::v2::InputPin;
 use futures::future::poll_fn;
+
+use embedded_hal_02::digital::v2 as eh02;
+use embedded_hal_1::digital::blocking as eh1;
+use embedded_hal_async::digital as eh_async;
 
 use crate::gpio::sealed::Pin as _;
 use crate::gpio::{AnyPin, FlexPin, Input, Output, Pin as GpioPin};
@@ -216,7 +219,19 @@ impl<'d, C: Channel, T: GpioPin> InputChannel<'d, C, T> {
     }
 }
 
-impl<'d, C: Channel, T: GpioPin> InputPin for InputChannel<'d, C, T> {
+impl<'d, C: Channel, T: GpioPin> eh02::InputPin for InputChannel<'d, C, T> {
+    type Error = Infallible;
+
+    fn is_high(&self) -> Result<bool, Self::Error> {
+        self.pin.is_high()
+    }
+
+    fn is_low(&self) -> Result<bool, Self::Error> {
+        self.pin.is_low()
+    }
+}
+
+impl<'d, C: Channel, T: GpioPin> eh1::InputPin for InputChannel<'d, C, T> {
     type Error = Infallible;
 
     fn is_high(&self) -> Result<bool, Self::Error> {
@@ -328,60 +343,68 @@ impl<'a> Drop for PortInputFuture<'a> {
 }
 
 impl<'a> Future for PortInputFuture<'a> {
-    type Output = ();
+    type Output = Result<(), Infallible>;
 
     fn poll(self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         PORT_WAKERS[self.pin_port as usize].register(cx.waker());
 
         let pin = unsafe { AnyPin::steal(self.pin_port) };
         if pin.conf().read().sense().is_disabled() {
-            Poll::Ready(())
+            Poll::Ready(Ok(()))
         } else {
             Poll::Pending
         }
     }
 }
 
-impl<'d, T: GpioPin> embassy::traits::gpio::WaitForHigh for Input<'d, T> {
-    type Future<'a>
+impl<'d, T: GpioPin> eh_async::WaitForHigh for Input<'d, T> {
+    type Error = Infallible;
+
+    type WaitForHighFuture<'a>
     where
         Self: 'a,
-    = impl Future<Output = ()> + Unpin + 'a;
+    = impl Future<Output = Result<(), Self::Error>> + Unpin + 'a;
 
-    fn wait_for_high<'a>(&'a mut self) -> Self::Future<'a> {
+    fn wait_for_high<'a>(&'a mut self) -> Self::WaitForHighFuture<'a> {
         self.pin.wait_for_high()
     }
 }
 
-impl<'d, T: GpioPin> embassy::traits::gpio::WaitForLow for Input<'d, T> {
-    type Future<'a>
+impl<'d, T: GpioPin> eh_async::WaitForLow for Input<'d, T> {
+    type Error = Infallible;
+
+    type WaitForLowFuture<'a>
     where
         Self: 'a,
-    = impl Future<Output = ()> + Unpin + 'a;
+    = impl Future<Output = Result<(), Self::Error>> + Unpin + 'a;
 
-    fn wait_for_low<'a>(&'a mut self) -> Self::Future<'a> {
+    fn wait_for_low<'a>(&'a mut self) -> Self::WaitForLowFuture<'a> {
         self.pin.wait_for_low()
     }
 }
 
-impl<'d, T: GpioPin> embassy::traits::gpio::WaitForAnyEdge for Input<'d, T> {
-    type Future<'a>
+impl<'d, T: GpioPin> eh_async::WaitForAnyEdge for Input<'d, T> {
+    type Error = Infallible;
+
+    type WaitForAnyEdgeFuture<'a>
     where
         Self: 'a,
-    = impl Future<Output = ()> + Unpin + 'a;
+    = impl Future<Output = Result<(), Self::Error>> + Unpin + 'a;
 
-    fn wait_for_any_edge<'a>(&'a mut self) -> Self::Future<'a> {
+    fn wait_for_any_edge<'a>(&'a mut self) -> Self::WaitForAnyEdgeFuture<'a> {
         self.pin.wait_for_any_edge()
     }
 }
 
-impl<'d, T: GpioPin> embassy::traits::gpio::WaitForHigh for FlexPin<'d, T> {
-    type Future<'a>
+impl<'d, T: GpioPin> eh_async::WaitForHigh for FlexPin<'d, T> {
+    type Error = Infallible;
+
+    type WaitForHighFuture<'a>
     where
         Self: 'a,
-    = impl Future<Output = ()> + Unpin + 'a;
+    = impl Future<Output = Result<(), Self::Error>> + Unpin + 'a;
 
-    fn wait_for_high<'a>(&'a mut self) -> Self::Future<'a> {
+    fn wait_for_high<'a>(&'a mut self) -> Self::WaitForHighFuture<'a> {
         self.pin.conf().modify(|_, w| w.sense().high());
 
         PortInputFuture {
@@ -391,13 +414,15 @@ impl<'d, T: GpioPin> embassy::traits::gpio::WaitForHigh for FlexPin<'d, T> {
     }
 }
 
-impl<'d, T: GpioPin> embassy::traits::gpio::WaitForLow for FlexPin<'d, T> {
-    type Future<'a>
+impl<'d, T: GpioPin> eh_async::WaitForLow for FlexPin<'d, T> {
+    type Error = Infallible;
+
+    type WaitForLowFuture<'a>
     where
         Self: 'a,
-    = impl Future<Output = ()> + Unpin + 'a;
+    = impl Future<Output = Result<(), Self::Error>> + Unpin + 'a;
 
-    fn wait_for_low<'a>(&'a mut self) -> Self::Future<'a> {
+    fn wait_for_low<'a>(&'a mut self) -> Self::WaitForLowFuture<'a> {
         self.pin.conf().modify(|_, w| w.sense().low());
 
         PortInputFuture {
@@ -407,13 +432,15 @@ impl<'d, T: GpioPin> embassy::traits::gpio::WaitForLow for FlexPin<'d, T> {
     }
 }
 
-impl<'d, T: GpioPin> embassy::traits::gpio::WaitForAnyEdge for FlexPin<'d, T> {
-    type Future<'a>
+impl<'d, T: GpioPin> eh_async::WaitForAnyEdge for FlexPin<'d, T> {
+    type Error = Infallible;
+
+    type WaitForAnyEdgeFuture<'a>
     where
         Self: 'a,
-    = impl Future<Output = ()> + Unpin + 'a;
+    = impl Future<Output = Result<(), Self::Error>> + Unpin + 'a;
 
-    fn wait_for_any_edge<'a>(&'a mut self) -> Self::Future<'a> {
+    fn wait_for_any_edge<'a>(&'a mut self) -> Self::WaitForAnyEdgeFuture<'a> {
         if self.is_high() {
             self.pin.conf().modify(|_, w| w.sense().low());
         } else {
