@@ -1,0 +1,12 @@
+[package]
+name = "embassy-samd"
+version = "0.1.0"
+authors = ["Blake Hildebrand <baugusthildebrand@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+embassy = { version = "0.1.0", path = "../embassy" }
+embassy-macros = { version = "0.1.0", path = "../embassy-macros", features = ["nrf"]}
+embassy-hal-common = {version = "0.1.0", path = "../embassy-hal-common" }
+
+atsamd21g = "0.11.0"
