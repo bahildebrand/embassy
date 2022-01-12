@@ -2,8 +2,6 @@
 #![feature(generic_associated_types)]
 #![feature(type_alias_impl_trait)]
 
-use core::hash::Hasher;
-
 use atsamd21g as pac;
 
 pub mod config {
@@ -51,7 +49,7 @@ pub fn init(_config: config::Config) {
     while gclk.status.read().syncbusy().bit_is_set() {}
 
     // Connect DFLL to GCLK1 output
-    gclk.clkctrl.modify(|_, w| unsafe {
+    gclk.clkctrl.modify(|_, w| {
         w.id().dfll48();
         w.gen().gclk1();
         w.clken().set_bit()
@@ -59,9 +57,7 @@ pub fn init(_config: config::Config) {
 
     // Errata 1.2.1
     while sysctrl.pclksr.read().dfllrdy().bit_is_clear() {}
-    sysctrl
-        .dfllctrl
-        .modify(|_, w| unsafe { w.enable().set_bit() });
+    sysctrl.dfllctrl.modify(|_, w| w.enable().set_bit());
     while sysctrl.pclksr.read().dfllrdy().bit_is_clear() {}
 
     sysctrl.dfllmul.modify(|_, w| unsafe {
@@ -71,7 +67,7 @@ pub fn init(_config: config::Config) {
     });
     while sysctrl.pclksr.read().dfllrdy().bit_is_clear() {}
 
-    sysctrl.dfllctrl.modify(|_, w| unsafe {
+    sysctrl.dfllctrl.modify(|_, w| {
         w.mode().set_bit();
         w.waitlock().set_bit();
         w.enable().set_bit()
