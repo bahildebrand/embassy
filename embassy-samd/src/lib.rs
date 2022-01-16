@@ -4,6 +4,8 @@
 
 use atsamd21g as pac;
 
+pub mod gpio;
+
 pub mod config {
     pub struct Config {}
 }
@@ -57,7 +59,7 @@ pub fn init(_config: config::Config) {
 
     // Errata 1.2.1
     while sysctrl.pclksr.read().dfllrdy().bit_is_clear() {}
-    sysctrl.dfllctrl.modify(|_, w| w.enable().set_bit());
+    sysctrl.dfllctrl.write(|w| w.enable().set_bit());
     while sysctrl.pclksr.read().dfllrdy().bit_is_clear() {}
 
     sysctrl.dfllmul.modify(|_, w| unsafe {
